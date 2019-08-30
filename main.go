@@ -2,40 +2,39 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
 
+	"github.com/citizenhacks/hackbot/hackbot"
 	"github.com/keybase/go-keybase-chat-bot/kbchat"
-	"github.com/op/go-logging"
 )
 
-var log = logging.MustGetLogger("main")
-
 func main() {
-	var kbLoc string
-	var kbc *kbchat.API
-	var err error
+	rc := mainInner()
+	os.Exit(rc)
+}
 
-	flag.StringVar(&kbLoc, "keybase", "keybase", "the location of the keybase binary")
+func mainInner() int {
+	var opts kbchat.RunOptions
+	var oneshot kbchat.OneshotOptions
+	flag.StringVar(&opts.KeybaseLocation, "keybase", "keybase", "keybase command")
+	flag.StringVar(&opts.HomeDir, "home", "", "Home directory")
+
+	flag.StringVar(&oneshot.Username, "username", "", "bot's username")
+	flag.StringVar(&oneshot.PaperKey, "paperkey", "", "bot's paperkey")
 	flag.Parse()
 
-	if kbc, err = kbchat.Start(kbchat.RunOptions{KeybaseLocation: kbLoc}); err != nil {
-		log.Fatalf("error creating API: %s", err.Error())
+	if oneshot.Username != "" && oneshot.PaperKey != "" {
+		opts.Oneshot = &oneshot
 	}
 
-	sub, err := kbc.ListenForNewTextMessages()
-	if err != nil {
-		log.Fatalf("error listening: %s", err.Error())
+	if opts.HomeDir != "" {
+		opts.StartService = true
 	}
 
-	for {
-		msg, err := sub.Read()
-		if err != nil {
-			log.Fatalf("failed to read message: %s", err.Error())
-		}
-
-		// skip messages sent by the bot
-		if msg.Message.Sender.Username == kbc.GetUsername() {
-			continue
-		}
+	bs := hackbot.NewBotServer(opts)
+	if err := bs.Start(); err != nil {
+		fmt.Printf("error running chat loop: %v\n", err)
 	}
-
+	return 0
 }
