@@ -181,29 +181,19 @@ func (s *BotServer) Start() (err error) {
 }
 
 func (s *BotServer) runHandler(msg chat1.MsgSummary) {
-	if msg.Content.TypeName != "text" || msg.Content.Text == nil {
-		s.logHandler(msg)
-		return
-	}
 
 	convID := msg.ConvID
-	msgText := strings.TrimPrefix(strings.TrimSpace(strings.ToLower(msg.Content.Text.Body)), "!")
 	var err error
-	switch msgText {
-	case followingTrigger:
-		err = s.followingHandler(msg)
-	case leaderTrigger:
-		err = s.leaderHandler(msg)
-	case proofsTrigger:
-		err = s.proofHandler(msg)
-	case pauseTrigger:
-		err = s.pauseHandler(msg)
-	case resumeTrigger:
-		err = s.resumeHandler(msg)
+	switch msg.Content.TypeName {
+	case "text":
+		err = s.textMsgHandler(msg)
+	case "join":
+		// TODO: add *new* users to set channels
+		fallthrough
 	default:
-		// just log and get out of there
 		err = s.logHandler(msg)
 	}
+
 	switch err.(type) {
 	case nil:
 		return
@@ -217,6 +207,29 @@ func (s *BotServer) runHandler(msg chat1.MsgSummary) {
 			s.debug("unable to send: %v", serr)
 		}
 		s.debug("unable to complete request %v", err)
+	}
+}
+
+func (s *BotServer) textMsgHandler(msg chat1.MsgSummary) error {
+	if msg.Content.Text == nil {
+		return s.logHandler(msg)
+	}
+
+	msgText := strings.TrimPrefix(strings.TrimSpace(strings.ToLower(msg.Content.Text.Body)), "!")
+	switch msgText {
+	case followingTrigger:
+		return s.followingHandler(msg)
+	case leaderTrigger:
+		return s.leaderHandler(msg)
+	case proofsTrigger:
+		return s.proofHandler(msg)
+	case pauseTrigger:
+		return s.pauseHandler(msg)
+	case resumeTrigger:
+		return s.resumeHandler(msg)
+	default:
+		// just log and get out of there
+		return s.logHandler(msg)
 	}
 }
 
