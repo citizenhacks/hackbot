@@ -1,21 +1,27 @@
 package hackbot
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/buger/jsonparser"
 	"github.com/keybase/go-keybase-chat-bot/kbchat"
 	"github.com/keybase/go-keybase-chat-bot/kbchat/types/chat1"
 	"github.com/op/go-logging"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 var log = logging.MustGetLogger("hackbot")
+
+const (
+	dbPath     = "store.lvldb"
+	dbSentinal = "sentinal"
+)
 
 const (
 	userCardEndpoint   = "https://keybase.io/_/api/1.0/user/card.json?username=%s"
@@ -61,24 +67,66 @@ var paymentMsgs = []string{
 	"I'm so proud of you.",
 	"such an example.",
 	"just for you. You're welcome.",
+	"don't spend it all in once place.",
+	"https://media2.giphy.com/media/5f2XMzubbKHqE/giphy.mp4#height=160&width=160&isvideo=true",
 }
 
 var paymentReactions = []string{
-	"💰",
-	"💲",
-	"💵",
-	"💸",
-	"🤑",
-	"🧧",
+	":moneybag:",
+	":money_mouth_face:",
+	":money_with_wings:",
+	":bank:",
+	":yen:",
+	":euro:",
+	":dollar:",
+}
+
+var duplicateErrMsgs = []string{
+	"Nice try.",
+	"Why are you trying to pull a fast one?",
+	"Not so fast.",
+	"Seriously?",
+	"I wasn't born yesterday.",
+	"Nope.",
+	"You.",
+	"https://media1.giphy.com/media/spfi6nabVuq5y/giphy.mp4#height=129&width=158&isvideo=true",
+	"https://media0.giphy.com/media/wYyTHMm50f4Dm/giphy.mp4#height=277&width=480&isvideo=true",
+	"https://media1.giphy.com/media/gnE4FFhtFoLKM/giphy.mp4#height=337&width=337&isvideo=true",
+}
+
+var duplicateErrReactions = []string{
+	":no_entry:",
+	":no_entry_sign:",
+	":no_bicycles:",
+	":no_smoking:",
+	":non-potable_water:",
+	":no_mobile_phones:",
+	":no_mouth:",
+	":no_good:",
+	":see_no_evil:",
+	":speak_no_evil:",
+	":hear_no_evil:",
+	":x:",
+	":angry:",
 }
 
 // hackbotErr holds a human readable error message to be returned directly.
 type hackbotErr struct {
-	msg string
+	msg      string
+	reaction string
 }
 
 func newHackbotErr(msg string, args ...interface{}) hackbotErr {
 	return hackbotErr{msg: fmt.Sprintf(msg, args...)}
+}
+
+func newHackbotDuplicateEntryError() hackbotErr {
+	msg := duplicateErrMsgs[rand.Intn(len(duplicateErrMsgs))]
+	reaction := duplicateErrReactions[rand.Intn(len(duplicateErrReactions))]
+	return hackbotErr{
+		msg:      fmt.Sprintf("%s You've already gotten this prize.", msg),
+		reaction: reaction,
+	}
 }
 
 func (e hackbotErr) Error() string {
@@ -96,10 +144,10 @@ type Options struct {
 }
 
 type BotServer struct {
-	sync.RWMutex
 	opts    kbchat.RunOptions
 	kbc     *kbchat.API
 	running bool
+	db      *leveldb.DB
 }
 
 func NewBotServer(opts kbchat.RunOptions) *BotServer {
@@ -137,10 +185,18 @@ func (s *BotServer) makeAdvertisement() kbchat.Advertisement {
 	}
 }
 
+func (s *BotServer) dbKey(username, trigger string) []byte {
+	return []byte(fmt.Sprintf("%s:%s", username, trigger))
+}
+
 func (s *BotServer) Start() (err error) {
-	s.Lock()
 	s.running = true
-	s.Unlock()
+	s.db, err = leveldb.OpenFile(dbPath, nil)
+	defer s.db.Close()
+	if err != nil {
+		s.debug("lvldb error: %s", err)
+		return err
+	}
 
 	rand.Seed(time.Now().Unix())
 
@@ -176,7 +232,7 @@ func (s *BotServer) Start() (err error) {
 		// if msg.Message.Sender.Username == kbc.GetUsername() {
 		// 	continue
 		// }
-		go s.runHandler(msg.Message)
+		s.runHandler(msg.Message)
 	}
 }
 
@@ -194,14 +250,18 @@ func (s *BotServer) runHandler(msg chat1.MsgSummary) {
 		err = s.logHandler(msg)
 	}
 
-	switch err.(type) {
+	switch err := err.(type) {
 	case nil:
 		return
 	case hackbotErr:
 		if _, serr := s.kbc.SendMessageByConvID(convID, err.Error()); serr != nil {
 			s.debug("unable to send %v", serr)
 		}
-		// TODO handle already processed.
+		if err.reaction != "" {
+			if _, serr := s.kbc.ReactByConvID(convID, msg.Id, err.reaction); serr != nil {
+				s.debug("unable to send %v", serr)
+			}
+		}
 	default:
 		if _, serr := s.kbc.SendMessageByConvID(convID, "Oh dear, I'm having some trouble. Try again if you're feeling brave."); serr != nil {
 			s.debug("unable to send: %v", serr)
@@ -233,15 +293,31 @@ func (s *BotServer) textMsgHandler(msg chat1.MsgSummary) error {
 	}
 }
 
+func (s *BotServer) checkStorageForDup(username, trigger string) error {
+	data, err := s.db.Get(s.dbKey(username, trigger), nil)
+	switch err {
+	case nil:
+		if bytes.Equal(data, []byte(dbSentinal)) {
+			return newHackbotDuplicateEntryError()
+		}
+	case leveldb.ErrNotFound:
+		return nil
+	}
+	return err
+}
+
 func (s *BotServer) baseHandler(msg chat1.MsgSummary, needProfile, needShowcase bool, trigger string) (profile *kbProfile, err error) {
 	s.debug("handling %q request", trigger)
+
 	if !s.running {
 		return nil, newHackbotErr("Sorry, I'm paused.")
 	}
 
-	// TODO check if already processed this trigger for the sender
+	sender := msg.Sender.Username
+	if err := s.checkStorageForDup(sender, trigger); err != nil {
+		return nil, err
+	}
 	if needProfile {
-		sender := msg.Sender.Username
 		profile, err = s.getProfile(sender)
 		if err != nil {
 			return nil, err
@@ -254,16 +330,22 @@ func (s *BotServer) baseHandler(msg chat1.MsgSummary, needProfile, needShowcase 
 			}
 		}
 	}
+
 	return profile, nil
 }
 
-func (s *BotServer) makePayment(msg chat1.MsgSummary, amount int) error {
+func (s *BotServer) makePayment(msg chat1.MsgSummary, trigger string, amount int) error {
 	recipient := msg.Sender.Username
 
 	paymentMsg := paymentMsgs[rand.Intn(len(paymentMsgs))]
-	msgText := fmt.Sprintf("@%s, %s +%dXLM@%s", recipient, paymentMsg, amount, recipient)
+	// TODO figure out what is wrong with ICS...
+	msgText := fmt.Sprintf("@%s, %s +%dTODO@%s", recipient, paymentMsg, amount, recipient)
 	s.debug("makePayment text: %s", msgText)
 	if _, err := s.kbc.InChatSendByConvID(msg.ConvID, msgText); err != nil {
+		return err
+	}
+	// mark the user as having received the prize.
+	if err := s.db.Put(s.dbKey(recipient, trigger), []byte(dbSentinal), nil); err != nil {
 		return err
 	}
 
@@ -272,12 +354,11 @@ func (s *BotServer) makePayment(msg chat1.MsgSummary, amount int) error {
 	if _, err := s.kbc.ReactByConvID(msg.ConvID, msg.Id, reactionMsg); err != nil {
 		return err
 	}
+
 	return nil
 }
 
 func (s *BotServer) followingHandler(msg chat1.MsgSummary) error {
-	s.RLock()
-	defer s.RUnlock()
 
 	profile, err := s.baseHandler(msg, true, false, followingTrigger)
 	if err != nil {
@@ -288,13 +369,10 @@ func (s *BotServer) followingHandler(msg chat1.MsgSummary) error {
 			followingNeeded, profile.numFollowing)
 	}
 
-	return s.makePayment(msg, followingPrize)
+	return s.makePayment(msg, followingTrigger, followingPrize)
 }
 
 func (s *BotServer) leaderHandler(msg chat1.MsgSummary) error {
-	s.RLock()
-	defer s.RUnlock()
-
 	profile, err := s.baseHandler(msg, true, true, leaderTrigger)
 	if err != nil {
 		return err
@@ -305,13 +383,10 @@ func (s *BotServer) leaderHandler(msg chat1.MsgSummary) error {
 			followersNeeded, profile.numFollowers)
 	}
 
-	return s.makePayment(msg, leaderPrize)
+	return s.makePayment(msg, leaderTrigger, leaderPrize)
 }
 
 func (s *BotServer) proofHandler(msg chat1.MsgSummary) error {
-	s.RLock()
-	defer s.RUnlock()
-
 	_, err := s.baseHandler(msg, true, true, proofsTrigger)
 	if err != nil {
 		return err
@@ -328,11 +403,17 @@ func (s *BotServer) proofHandler(msg chat1.MsgSummary) error {
 		return newHackbotErr("You need at least %d proofs but only have %d. Disaster.",
 			proofsNeeded, numProofs)
 	}
-	return s.makePayment(msg, proofsPrize)
+	return s.makePayment(msg, proofsTrigger, proofsPrize)
 }
 
 func (s *BotServer) logHandler(msg chat1.MsgSummary) error {
 	if msg.Content.Text != nil {
+		if msg.Content.Text.Body == "i read the source" {
+			if err := s.checkStorageForDup(msg.Sender.Username, "src"); err != nil {
+				return err
+			}
+			return s.makePayment(msg, "src", 100)
+		}
 		s.debug("unhandled msg from (%s): %s", msg.Sender.Username,
 			msg.Content.Text.Body)
 	} else {
@@ -343,9 +424,6 @@ func (s *BotServer) logHandler(msg chat1.MsgSummary) error {
 }
 
 func (s *BotServer) pauseHandler(msg chat1.MsgSummary) error {
-	s.Lock()
-	defer s.Unlock()
-
 	sender := msg.Sender.Username
 	s.debug("handling pause request from %s", sender)
 	if _, ok := admins[sender]; !ok {
@@ -357,9 +435,6 @@ func (s *BotServer) pauseHandler(msg chat1.MsgSummary) error {
 }
 
 func (s *BotServer) resumeHandler(msg chat1.MsgSummary) error {
-	s.Lock()
-	defer s.Unlock()
-
 	sender := msg.Sender.Username
 	s.debug("handling resume request from %s", sender)
 	if _, ok := admins[sender]; !ok {

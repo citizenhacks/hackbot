@@ -16,3 +16,4 @@
 
 # GoLand config
 .idea/
+store.lvldb/*
