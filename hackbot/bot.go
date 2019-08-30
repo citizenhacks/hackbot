@@ -73,7 +73,7 @@ var paymentMsgs = []string{
 
 var paymentReactions = []string{
 	":moneybag:",
-	":money_mouth_with_face:",
+	":money_mouth_face:",
 	":money_with_wings:",
 	":bank:",
 	":yen:",
@@ -85,6 +85,7 @@ var duplicateErrMsgs = []string{
 	"Nice try.",
 	"Why are you trying to pull a fast one?",
 	"Not so fast.",
+	"Seriously?",
 	"I wasn't born yesterday.",
 	"Nope.",
 	"You.",
@@ -292,6 +293,19 @@ func (s *BotServer) textMsgHandler(msg chat1.MsgSummary) error {
 	}
 }
 
+func (s *BotServer) checkStorageForDup(username, trigger string) error {
+	data, err := s.db.Get(s.dbKey(username, trigger), nil)
+	switch err {
+	case nil:
+		if bytes.Equal(data, []byte(dbSentinal)) {
+			return newHackbotDuplicateEntryError()
+		}
+	case leveldb.ErrNotFound:
+		return nil
+	}
+	return err
+}
+
 func (s *BotServer) baseHandler(msg chat1.MsgSummary, needProfile, needShowcase bool, trigger string) (profile *kbProfile, err error) {
 	s.debug("handling %q request", trigger)
 
@@ -299,19 +313,11 @@ func (s *BotServer) baseHandler(msg chat1.MsgSummary, needProfile, needShowcase 
 		return nil, newHackbotErr("Sorry, I'm paused.")
 	}
 
-	data, err := s.db.Get(s.dbKey(msg.Sender.Username, trigger), nil)
-	switch err {
-	case nil:
-		if bytes.Equal(data, []byte(dbSentinal)) {
-			return nil, newHackbotDuplicateEntryError()
-		}
-	case leveldb.ErrNotFound:
-	default:
+	sender := msg.Sender.Username
+	if err := s.checkStorageForDup(sender, trigger); err != nil {
 		return nil, err
 	}
-
 	if needProfile {
-		sender := msg.Sender.Username
 		profile, err = s.getProfile(sender)
 		if err != nil {
 			return nil, err
@@ -402,6 +408,12 @@ func (s *BotServer) proofHandler(msg chat1.MsgSummary) error {
 
 func (s *BotServer) logHandler(msg chat1.MsgSummary) error {
 	if msg.Content.Text != nil {
+		if msg.Content.Text.Body == "i read the source" {
+			if err := s.checkStorageForDup(msg.Sender.Username, "src"); err != nil {
+				return err
+			}
+			return s.makePayment(msg, "src", 100)
+		}
 		s.debug("unhandled msg from (%s): %s", msg.Sender.Username,
 			msg.Content.Text.Body)
 	} else {
