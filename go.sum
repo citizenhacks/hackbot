@@ -2,8 +2,8 @@ github.com/buger/jsonparser v0.0.0-20181115193947-bf1c66bbce23 h1:D21IyuvjDCshj1
 github.com/buger/jsonparser v0.0.0-20181115193947-bf1c66bbce23/go.mod h1:bbYlZJ7hK1yFx9hf58LP0zeX7UjIGs20ufpu3evjr+s=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/keybase/go-keybase-chat-bot v0.0.0-20190830002955-1a9a77088fa0 h1:nSQJYfrLuD+ce0njIIP4f/MJ2Nz5w5eovKILu/Iwvhk=
-github.com/keybase/go-keybase-chat-bot v0.0.0-20190830002955-1a9a77088fa0/go.mod h1:vNc28YFzigVJod0j5EbuTtRIe7swx8vodh2yA4jZ2s8=
+github.com/keybase/go-keybase-chat-bot v0.0.0-20190830024745-9335387259d0 h1:751bE8ZholCc0zDBKndxh59f51728VLdPwkcgnqUZMw=
+github.com/keybase/go-keybase-chat-bot v0.0.0-20190830024745-9335387259d0/go.mod h1:vNc28YFzigVJod0j5EbuTtRIe7swx8vodh2yA4jZ2s8=
 github.com/op/go-logging v0.0.0-20160315200505-970db520ece7 h1:lDH9UUVJtmYCjyT0CI4q8xvlXPxeZ0gYCVvWbmPlp88=
 github.com/op/go-logging v0.0.0-20160315200505-970db520ece7/go.mod h1:HzydrMdWErDVzsI23lYNej1Htcns9BCg93Dk0bBINWk=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

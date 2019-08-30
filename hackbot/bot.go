@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/buger/jsonparser"
@@ -21,29 +22,35 @@ const (
 	userLookupEndpoint = "https://keybase.io/_/api/1.0/user/lookup.json?username=%s&fields=proofs_summary"
 )
 
-// TODO revert
-const showcaseTeamName = "keybase" //"citizenhacks.2019"
+const showcaseTeamName = "citizenhacks.2019"
 
-// TODO add pause/resume admin commands
-// TODO get unfurls working for location
+var admins = map[string]struct{}{
+	"joshblum":    struct{}{},
+	"marceloneil": struct{}{},
+	"client4":     struct{}{},
+}
+
+// TODO location
 // TODO think about flips.
 const (
-	followingTrigger = "i'm a follower!"
-	leaderTrigger    = "i'm a leader!"
+	followingTrigger = "i am a follower!"
+	leaderTrigger    = "i am a leader!"
 	proofsTrigger    = "i have the proof!"
+	pauseTrigger     = "pause"
+	resumeTrigger    = "resume"
 )
 
 const (
 	followingNeeded = 25
 	followersNeeded = 25
-	proofsNeeded    = 100
+	proofsNeeded    = 5
 )
 
 // in XLM
 const (
 	leaderPrize    = 100
-	followingPrize = 10
-	proofsPrize    = 25
+	followingPrize = 20
+	proofsPrize    = 50
 )
 
 // prefixed by the sender's username
@@ -65,15 +72,16 @@ var paymentReactions = []string{
 	"🧧",
 }
 
-type missingRequirementError struct {
+// hackbotErr holds a human readable error message to be returned directly.
+type hackbotErr struct {
 	msg string
 }
 
-func newMissingRequirementError(msg string, args ...interface{}) missingRequirementError {
-	return missingRequirementError{msg: fmt.Sprintf(msg, args...)}
+func newHackbotErr(msg string, args ...interface{}) hackbotErr {
+	return hackbotErr{msg: fmt.Sprintf(msg, args...)}
 }
 
-func (e missingRequirementError) Error() string {
+func (e hackbotErr) Error() string {
 	return e.msg
 }
 
@@ -88,8 +96,10 @@ type Options struct {
 }
 
 type BotServer struct {
-	opts kbchat.RunOptions
-	kbc  *kbchat.API
+	sync.RWMutex
+	opts    kbchat.RunOptions
+	kbc     *kbchat.API
+	running bool
 }
 
 func NewBotServer(opts kbchat.RunOptions) *BotServer {
@@ -105,21 +115,21 @@ func (s *BotServer) debug(msg string, args ...interface{}) {
 func (s *BotServer) makeAdvertisement() kbchat.Advertisement {
 	return kbchat.Advertisement{
 		Alias: "hackbot",
-		Advertisements: []chat1.AdvertiseCommandsParam{
+		Advertisements: []chat1.AdvertiseCommandAPIParam{
 			{
 				Typ: "public",
 				Commands: []chat1.UserBotCommandInput{
 					{
 						Name:        followingTrigger,
-						Description: fmt.Sprintf("Win an XLM prize if you follow at least %d people.", followingNeeded),
+						Description: fmt.Sprintf("Win %dXLM if you follow at least %d people.", followingPrize, followingNeeded),
 					},
 					{
 						Name:        leaderTrigger,
-						Description: fmt.Sprintf("Win an XLM prize if at least %d people follow you.", followersNeeded),
+						Description: fmt.Sprintf("Win %dXLM if at least %d people follow you.", leaderPrize, followersNeeded),
 					},
 					{
 						Name:        proofsTrigger,
-						Description: fmt.Sprintf("Win an XLM prize if you have at least %d Keybase proofs.", proofsNeeded),
+						Description: fmt.Sprintf("Win %dXLM if you have at least %d Keybase proofs.", proofsPrize, proofsNeeded),
 					},
 				},
 			},
@@ -128,6 +138,10 @@ func (s *BotServer) makeAdvertisement() kbchat.Advertisement {
 }
 
 func (s *BotServer) Start() (err error) {
+	s.Lock()
+	s.running = true
+	s.Unlock()
+
 	rand.Seed(time.Now().Unix())
 
 	s.debug("Start(%+v", s.opts)
@@ -168,11 +182,12 @@ func (s *BotServer) Start() (err error) {
 
 func (s *BotServer) runHandler(msg chat1.MsgSummary) {
 	if msg.Content.TypeName != "text" || msg.Content.Text == nil {
+		s.logHandler(msg)
 		return
 	}
 
 	convID := msg.ConvID
-	msgText := strings.TrimSpace(strings.ToLower(msg.Content.Text.Body))
+	msgText := strings.TrimPrefix(strings.TrimSpace(strings.ToLower(msg.Content.Text.Body)), "!")
 	var err error
 	switch msgText {
 	case followingTrigger:
@@ -181,6 +196,10 @@ func (s *BotServer) runHandler(msg chat1.MsgSummary) {
 		err = s.leaderHandler(msg)
 	case proofsTrigger:
 		err = s.proofHandler(msg)
+	case pauseTrigger:
+		err = s.pauseHandler(msg)
+	case resumeTrigger:
+		err = s.resumeHandler(msg)
 	default:
 		// just log and get out of there
 		err = s.logHandler(msg)
@@ -188,13 +207,13 @@ func (s *BotServer) runHandler(msg chat1.MsgSummary) {
 	switch err.(type) {
 	case nil:
 		return
-	case missingRequirementError:
+	case hackbotErr:
 		if _, serr := s.kbc.SendMessageByConvID(convID, err.Error()); serr != nil {
 			s.debug("unable to send %v", serr)
 		}
 		// TODO handle already processed.
 	default:
-		if _, serr := s.kbc.SendMessageByConvID(convID, "Oh no, having some trouble. Try again if you're feeling brave."); serr != nil {
+		if _, serr := s.kbc.SendMessageByConvID(convID, "Oh dear, I'm having some trouble. Try again if you're feeling brave."); serr != nil {
 			s.debug("unable to send: %v", serr)
 		}
 		s.debug("unable to complete request %v", err)
@@ -203,6 +222,10 @@ func (s *BotServer) runHandler(msg chat1.MsgSummary) {
 
 func (s *BotServer) baseHandler(msg chat1.MsgSummary, needProfile, needShowcase bool, trigger string) (profile *kbProfile, err error) {
 	s.debug("handling %q request", trigger)
+	if !s.running {
+		return nil, newHackbotErr("Sorry, I'm paused.")
+	}
+
 	// TODO check if already processed this trigger for the sender
 	if needProfile {
 		sender := msg.Sender.Username
@@ -214,7 +237,7 @@ func (s *BotServer) baseHandler(msg chat1.MsgSummary, needProfile, needShowcase 
 		if needShowcase {
 			if !profile.hasRequiredShowcase {
 				msg := "You have to publish your membership in %s first. Go to your profile and edit which teams you have showcased!"
-				return nil, newMissingRequirementError(msg, showcaseTeamName)
+				return nil, newHackbotErr(msg, showcaseTeamName)
 			}
 		}
 	}
@@ -240,12 +263,15 @@ func (s *BotServer) makePayment(msg chat1.MsgSummary, amount int) error {
 }
 
 func (s *BotServer) followingHandler(msg chat1.MsgSummary) error {
+	s.RLock()
+	defer s.RUnlock()
+
 	profile, err := s.baseHandler(msg, true, false, followingTrigger)
 	if err != nil {
 		return err
 	}
 	if profile.numFollowing < followingNeeded {
-		return newMissingRequirementError("You need to follow at least %d others but only have %d. Tragedy.",
+		return newHackbotErr("You need to follow at least %d others but only have %d. Tragedy.",
 			followingNeeded, profile.numFollowing)
 	}
 
@@ -253,13 +279,16 @@ func (s *BotServer) followingHandler(msg chat1.MsgSummary) error {
 }
 
 func (s *BotServer) leaderHandler(msg chat1.MsgSummary) error {
+	s.RLock()
+	defer s.RUnlock()
+
 	profile, err := s.baseHandler(msg, true, true, leaderTrigger)
 	if err != nil {
 		return err
 	}
 
 	if profile.numFollowers < followersNeeded {
-		return newMissingRequirementError("You need at least %d followers but only have %d. Bummer.",
+		return newHackbotErr("You need at least %d followers but only have %d. Bummer.",
 			followersNeeded, profile.numFollowers)
 	}
 
@@ -267,7 +296,9 @@ func (s *BotServer) leaderHandler(msg chat1.MsgSummary) error {
 }
 
 func (s *BotServer) proofHandler(msg chat1.MsgSummary) error {
-	s.debug("handling proof request")
+	s.RLock()
+	defer s.RUnlock()
+
 	_, err := s.baseHandler(msg, true, true, proofsTrigger)
 	if err != nil {
 		return err
@@ -281,15 +312,48 @@ func (s *BotServer) proofHandler(msg chat1.MsgSummary) error {
 	s.debug("found %d proofs for %s", numProofs, msg.Sender.Username)
 
 	if numProofs < proofsNeeded {
-		return newMissingRequirementError("You need at least %d proofs but only have %d. Disaster.",
+		return newHackbotErr("You need at least %d proofs but only have %d. Disaster.",
 			proofsNeeded, numProofs)
 	}
 	return s.makePayment(msg, proofsPrize)
 }
 
 func (s *BotServer) logHandler(msg chat1.MsgSummary) error {
-	s.debug("unhandled msg from (%s): %s", msg.Sender.Username,
-		msg.Content.Text.Body)
+	if msg.Content.Text != nil {
+		s.debug("unhandled msg from (%s): %s", msg.Sender.Username,
+			msg.Content.Text.Body)
+	} else {
+		s.debug("unhandled msg from (%s): %+v", msg.Sender.Username,
+			msg.Content)
+	}
+	return nil
+}
+
+func (s *BotServer) pauseHandler(msg chat1.MsgSummary) error {
+	s.Lock()
+	defer s.Unlock()
+
+	sender := msg.Sender.Username
+	s.debug("handling pause request from %s", sender)
+	if _, ok := admins[sender]; !ok {
+		s.debug("ignoring pause request from non-admin")
+	}
+
+	s.running = false
+	return nil
+}
+
+func (s *BotServer) resumeHandler(msg chat1.MsgSummary) error {
+	s.Lock()
+	defer s.Unlock()
+
+	sender := msg.Sender.Username
+	s.debug("handling resume request from %s", sender)
+	if _, ok := admins[sender]; !ok {
+		s.debug("ignoring resume request from non-admin")
+	}
+
+	s.running = true
 	return nil
 }
 
