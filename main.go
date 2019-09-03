@@ -2,19 +2,15 @@ package main
 
 import (
 	"flag"
-	"fmt"
-	"os"
 
 	"github.com/citizenhacks/hackbot/hackbot"
 	"github.com/keybase/go-keybase-chat-bot/kbchat"
+	"github.com/op/go-logging"
 )
 
-func main() {
-	rc := mainInner()
-	os.Exit(rc)
-}
+var log = logging.MustGetLogger("hackbot")
 
-func mainInner() int {
+func main() {
 	var opts kbchat.RunOptions
 	var oneshot kbchat.OneshotOptions
 	flag.StringVar(&opts.KeybaseLocation, "keybase", "keybase", "keybase command")
@@ -38,18 +34,14 @@ func mainInner() int {
 	if clearCmds {
 		kbc, err := kbchat.Start(opts)
 		if err != nil {
-			fmt.Printf("error clearing advertisemnts: %v\n", err)
-			return 1
+			log.Fatalf("error clearing advertisemnts: %v\n", err)
 		}
 		if err := kbc.ClearCommands(); err != nil {
-			fmt.Printf("error clearing advertisemnts: %v\n", err)
+			log.Fatalf("error clearing advertisemnts: %v\n", err)
 		}
-		return 0
 	}
 	bs := hackbot.NewBotServer(opts)
 	if err := bs.Start(); err != nil {
-		fmt.Printf("error running chat loop: %v\n", err)
-		return 1
+		log.Fatalf("error running chat loop: %v\n", err)
 	}
-	return 0
 }
