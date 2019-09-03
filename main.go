@@ -39,6 +39,7 @@ func main() {
 		if err := kbc.ClearCommands(); err != nil {
 			log.Fatalf("error clearing advertisemnts: %v\n", err)
 		}
+		return
 	}
 	bs := hackbot.NewBotServer(opts)
 	if err := bs.Start(); err != nil {
