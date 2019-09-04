@@ -37,7 +37,6 @@ var admins = map[string]struct{}{
 }
 
 // TODO location
-// TODO think about flips.
 const (
 	followingTrigger = "i am a follower!"
 	leaderTrigger    = "i am a leader!"
@@ -227,7 +226,7 @@ func (s *BotServer) Start() (err error) {
 			continue
 		}
 
-		// TODO re-enable
+		// TODO re-enable, hoist username var
 		// skip messages sent by the bot
 		// if msg.Message.Sender.Username == kbc.GetUsername() {
 		// 	continue
@@ -336,10 +335,8 @@ func (s *BotServer) baseHandler(msg chat1.MsgSummary, needProfile, needShowcase 
 
 func (s *BotServer) makePayment(msg chat1.MsgSummary, trigger string, amount int) error {
 	recipient := msg.Sender.Username
-
 	paymentMsg := paymentMsgs[rand.Intn(len(paymentMsgs))]
-	// TODO figure out what is wrong with ICS...
-	msgText := fmt.Sprintf("@%s, %s +%dTODO@%s", recipient, paymentMsg, amount, recipient)
+	msgText := fmt.Sprintf("@%s, %s +%dXLM@%s", recipient, paymentMsg, amount, recipient)
 	s.debug("makePayment text: %s", msgText)
 	if _, err := s.kbc.InChatSendByConvID(msg.ConvID, msgText); err != nil {
 		return err
