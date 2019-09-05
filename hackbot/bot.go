@@ -43,6 +43,7 @@ const (
 	proofsTrigger    = "i have the proof!"
 	pauseTrigger     = "pause"
 	resumeTrigger    = "resume"
+	helpTrigger      = "help"
 )
 
 const (
@@ -178,6 +179,10 @@ func (s *BotServer) makeAdvertisement() kbchat.Advertisement {
 						Name:        proofsTrigger,
 						Description: fmt.Sprintf("Win %dXLM if you have at least %d Keybase proofs.", proofsPrize, proofsNeeded),
 					},
+					{
+						Name:        helpTrigger,
+						Description: "Learn about what I can do and who made me.",
+					},
 				},
 			},
 		},
@@ -286,6 +291,8 @@ func (s *BotServer) textMsgHandler(msg chat1.MsgSummary) error {
 		return s.pauseHandler(msg)
 	case resumeTrigger:
 		return s.resumeHandler(msg)
+	case helpTrigger:
+		return s.helpHandler(msg)
 	default:
 		// just log and get out of there
 		return s.logHandler(msg)
@@ -440,6 +447,16 @@ func (s *BotServer) resumeHandler(msg chat1.MsgSummary) error {
 
 	s.running = true
 	return nil
+}
+
+func (s *BotServer) helpHandler(msg chat1.MsgSummary) error {
+	help := "Greetings! I offer prizes for building out your Keybase profile, try `!%s`\n"
+	help += "Was made with :heart: by @joshblum, @marceloneil, and @client4.\n"
+	help += "You can check out my insides at https://github.com/citizenhacks/hackbot"
+	publicTriggers := []string{followingTrigger, leaderTrigger, proofsTrigger}
+	help = fmt.Sprintf(help, publicTriggers[rand.Intn(len(publicTriggers))])
+	_, err := s.kbc.SendMessageByConvID(msg.ConvID, help)
+	return err
 }
 
 func (s *BotServer) getProfile(username string) (*kbProfile, error) {
