@@ -38,12 +38,13 @@ var admins = map[string]struct{}{
 
 // TODO location
 const (
-	followingTrigger = "i am a follower!"
-	leaderTrigger    = "i am a leader!"
-	proofsTrigger    = "i have the proof!"
-	pauseTrigger     = "pause"
-	resumeTrigger    = "resume"
-	helpTrigger      = "help"
+	followingTrigger    = "i am a follower!"
+	leaderTrigger       = "i am a leader!"
+	proofsTrigger       = "i have the proof!"
+	pauseTrigger        = "pause"
+	resumeTrigger       = "resume"
+	helpTrigger         = "help"
+	doublePrizesTrigger = "double prizes"
 )
 
 const (
@@ -54,9 +55,10 @@ const (
 
 // in XLM
 const (
-	leaderPrize    = 100
-	followingPrize = 20
-	proofsPrize    = 50
+	leaderPrize       = 100
+	followingPrize    = 20
+	proofsPrize       = 50
+	doublePrizesPrize = leaderPrize + followingPrize + proofsPrize
 )
 
 // prefixed by the sender's username
@@ -180,6 +182,10 @@ func (s *BotServer) makeAdvertisement() kbchat.Advertisement {
 						Description: fmt.Sprintf("Win %dXLM if you have at least %d Keybase proofs.", proofsPrize, proofsNeeded),
 					},
 					{
+						Name:        doublePrizesTrigger,
+						Description: fmt.Sprintf("Double your winnings by completing all three tasks!"),
+					},
+					{
 						Name:        helpTrigger,
 						Description: "Learn about what I can do and who made me.",
 					},
@@ -287,6 +293,8 @@ func (s *BotServer) textMsgHandler(msg chat1.MsgSummary) error {
 		return s.leaderHandler(msg)
 	case proofsTrigger:
 		return s.proofHandler(msg)
+	case doublePrizesTrigger:
+		return s.doublePrizesHandler(msg)
 	case pauseTrigger:
 		return s.pauseHandler(msg)
 	case resumeTrigger:
@@ -408,6 +416,27 @@ func (s *BotServer) proofHandler(msg chat1.MsgSummary) error {
 			proofsNeeded, numProofs)
 	}
 	return s.makePayment(msg, proofsTrigger, proofsPrize)
+}
+
+func (s *BotServer) doublePrizesHandler(msg chat1.MsgSummary) error {
+	_, err := s.baseHandler(msg, false, false, doublePrizesTrigger)
+	if err != nil {
+		return err
+	}
+
+	for _, trigger := range []string{proofsTrigger, followingTrigger, leaderTrigger} {
+		err = s.checkStorageForDup(msg.Sender.Username, trigger)
+		switch err.(type) {
+		case nil:
+			return newHackbotErr("Uh oh, you haven't completed all the tasks. Try `!%s` again!", trigger)
+		case hackbotErr:
+			// ignore error since we've gotten this prize
+		default:
+			return err
+		}
+	}
+
+	return s.makePayment(msg, doublePrizesTrigger, doublePrizesPrize)
 }
 
 func (s *BotServer) logHandler(msg chat1.MsgSummary) error {
