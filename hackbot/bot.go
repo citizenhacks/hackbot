@@ -461,6 +461,7 @@ func (s *BotServer) pauseHandler(msg chat1.MsgSummary) error {
 	s.debug("handling pause request from %s", sender)
 	if _, ok := admins[sender]; !ok {
 		s.debug("ignoring pause request from non-admin")
+		return nil
 	}
 
 	s.running = false
@@ -472,6 +473,7 @@ func (s *BotServer) resumeHandler(msg chat1.MsgSummary) error {
 	s.debug("handling resume request from %s", sender)
 	if _, ok := admins[sender]; !ok {
 		s.debug("ignoring resume request from non-admin")
+		return nil
 	}
 
 	s.running = true
